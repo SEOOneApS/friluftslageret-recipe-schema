@@ -156,7 +156,7 @@
       }
     }
 
-    // 2. Fallback: OG image
+    // 2. Fallback: OG image (men IKKE fra pim.)
     var og = document.querySelector('meta[property="og:image"]');
     if (og && og.content) {
       var url = og.content;
@@ -259,6 +259,7 @@
     var instructions = [];
     var contentSections = getMainContentSections();
     var currentSectionName = '';
+    var seenTexts = {}; // Til at undgå dubletter
 
     for (var s = 0; s < contentSections.length; s++) {
       var section = contentSections[s];
@@ -276,20 +277,7 @@
           foundStart = true;
           currentSectionName = headingText;
           log('Fandt instruktions-start:', headingText, 'i sektion:', section.id);
-          continue;
-        }
-
-        if (!foundStart) continue;
-
-        // Opdater sektion-navn for FORBEREDELSE/TILBEREDNING
-        if (/^(FORBEREDELSE|TILBEREDNING)$/i.test(headingText)) {
-          currentSectionName = headingText;
-          continue;
-        }
-
-        // Stop ved andre overskrifter
-        if (heading.tagName.match(/^H[2-3]$/) && headingText.length > 0) {
-          break;
+          break; // Stop efter første match
         }
       }
 
@@ -318,13 +306,24 @@
             continue;
           }
 
+          // Ignorer hvis vi allerede har set denne tekst (undgå dubletter)
+          var textKey = stepText.substring(0, 50);
+          if (seenTexts[textKey]) {
+            continue;
+          }
+          seenTexts[textKey] = true;
+
           instructions.push({
-            name: currentSectionName ? currentSectionName + ' - Trin ' + stepMatch[1] : 'Trin ' + stepMatch[1],
+            name: 'Trin ' + (instructions.length + 1),
             text: stepText
           });
+
+          // Stop ved 15 trin for at undgå for mange
+          if (instructions.length >= 15) break;
         }
       }
 
+      // Stop efter første sektion med instruktioner
       if (instructions.length > 0) break;
     }
 
