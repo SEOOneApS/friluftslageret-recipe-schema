@@ -68,6 +68,24 @@
     return 'PT' + mins + 'M';
   }
 
+  /**
+   * Tjekker om et element er inde i en cookie/consent popup eller lignende
+   */
+  function isInsideIgnoredElement(el) {
+    var current = el;
+    while (current && current !== document.body) {
+      var id = (current.id || '').toLowerCase();
+      var className = (current.className || '').toLowerCase();
+
+      // Ignorer cookie popups, consent banners, modals etc.
+      if (id.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay/i) ||
+          className.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay/i)) {
+        return true;
+      }
+      current = current.parentElement;
+    }
+    return false;
+  }
 
   // =====================================================
   // EKSTRAKTION AF DATA
@@ -75,8 +93,11 @@
 
   function extractTitle() {
     // Friluftslageret bruger h1 til titel
-    var h1 = document.querySelector('h1');
-    if (h1) {
+    var h1Elements = document.querySelectorAll('h1');
+    for (var i = 0; i < h1Elements.length; i++) {
+      var h1 = h1Elements[i];
+      if (isInsideIgnoredElement(h1)) continue;
+
       var text = cleanText(h1.textContent);
       if (text.length > 3 && text.length < 200) {
         log('Fandt titel fra h1:', text);
@@ -85,8 +106,11 @@
     }
 
     // Fallback til h2
-    var h2 = document.querySelector('h2');
-    if (h2) {
+    var h2Elements = document.querySelectorAll('h2');
+    for (var i = 0; i < h2Elements.length; i++) {
+      var h2 = h2Elements[i];
+      if (isInsideIgnoredElement(h2)) continue;
+
       var text = cleanText(h2.textContent);
       if (text.length > 3 && text.length < 200) {
         return text;
@@ -106,9 +130,10 @@
     var og = document.querySelector('meta[property="og:description"]');
     if (og && og.content) return og.content;
 
-    // Første relevante paragraph
+    // Første relevante paragraph (ikke i cookie popup)
     var paragraphs = document.querySelectorAll('p');
     for (var i = 0; i < paragraphs.length; i++) {
+      if (isInsideIgnoredElement(paragraphs[i])) continue;
       var text = cleanText(paragraphs[i].textContent);
       if (text.length > 80 && text.length < 500) {
         return text.substring(0, 200) + (text.length > 200 ? '...' : '');
@@ -127,6 +152,10 @@
 
     for (var i = 0; i < allElements.length; i++) {
       var el = allElements[i];
+
+      // Spring cookie popups over
+      if (isInsideIgnoredElement(el)) continue;
+
       var text = el.textContent || '';
 
       // Find "Ingredienser" overskrift
@@ -189,6 +218,10 @@
 
     for (var i = 0; i < allElements.length; i++) {
       var el = allElements[i];
+
+      // Spring cookie popups over
+      if (isInsideIgnoredElement(el)) continue;
+
       var text = cleanText(el.textContent);
 
       // Find sektion-start
