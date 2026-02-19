@@ -1,8 +1,11 @@
 /**
  * Friluftslageret Recipe Schema Generator - AUTO VERSION
  *
- * Automatisk generering af schema.org Recipe markup.
- * Tilpasset Friluftslageret.dk's HTML-struktur.
+ * VIGTIGT: Dette script finder opskriftsindhold ved at:
+ * 1. Bruge page title som opskriftsnavn (mest pålidelig)
+ * 2. Finde billede fra --bgimage CSS variabel
+ * 3. Søge efter "Ingredienser" og "Fremgangsmåde" overskrifter
+ * 4. Ignorere navigation, footer, popups via section ID'er
  */
 
 (function() {
@@ -49,40 +52,55 @@
   }
 
   // =====================================================
+  // FIND HOVEDINDHOLD - Ignorer navigation, footer, popups
+  // =====================================================
+
+  function getMainContentSections() {
+    // Find alle sections der IKKE er navigation, header, footer, eller popups
+    var allSections = document.querySelectorAll('section[id]');
+    var contentSections = [];
+
+    for (var i = 0; i < allSections.length; i++) {
+      var section = allSections[i];
+      var id = (section.id || '').toLowerCase();
+
+      // Spring over kendte ikke-indhold sektioner
+      if (id.match(/nav|menu|header|footer|cookie|consent|login|modal|popup|banner/i)) {
+        continue;
+      }
+
+      // Spring over sektioner der indeholder navigation-tekst
+      var text = section.textContent.substring(0, 200).toLowerCase();
+      if (text.match(/dame.*herre|herre.*dame|jakker.*bukser|rygsække.*telte/i)) {
+        continue;
+      }
+
+      contentSections.push(section);
+    }
+
+    log('Fandt', contentSections.length, 'indhold-sektioner');
+    return contentSections;
+  }
+
+  // =====================================================
   // EKSTRAKTION AF DATA
   // =====================================================
 
   function extractTitle() {
-    // Find h1 der IKKE er i modal/popup/login
-    // Brug article eller main content område hvis muligt
-    var mainContent = document.querySelector('article, main, .content, .recipe, section[class*="content"]');
-    var searchArea = mainContent || document.body;
-
-    var h1Elements = searchArea.querySelectorAll('h1');
-    for (var i = 0; i < h1Elements.length; i++) {
-      var h1 = h1Elements[i];
-      var text = cleanText(h1.textContent);
-
-      // Spring over hvis det ligner login/cookie tekst
-      if (text.match(/login|log ind|cookie|engangskode|samtykke|accept/i)) {
-        continue;
-      }
-
-      if (text.length > 3 && text.length < 200) {
-        log('Fandt titel fra h1:', text);
-        return text;
-      }
-    }
-
-    // Fallback: Brug page title og fjern site-navn
+    // BRUG PAGE TITLE - det er mest pålideligt
     var pageTitle = document.title;
-    var cleanTitle = pageTitle.split('|')[0].split('-')[0].split('–')[0].trim();
-    log('Bruger page title som fallback:', cleanTitle);
+
+    // Fjern site-navn (efter | eller -)
+    var cleanTitle = pageTitle.split('|')[0].split(' - ')[0].split(' – ')[0].trim();
+
+    // Fjern "Opskrift:" prefix hvis det findes
+    cleanTitle = cleanTitle.replace(/^opskrift:\s*/i, '');
+
+    log('Bruger page title som navn:', cleanTitle);
     return cleanTitle;
   }
 
   function extractDescription() {
-    // Meta description er mest pålidelig
     var meta = document.querySelector('meta[name="description"]');
     if (meta && meta.content) return meta.content;
 
@@ -93,20 +111,46 @@
   }
 
   function extractImage() {
-    // 1. Find billede fra --bgimage CSS variabel (header billede)
-    var allElements = document.querySelectorAll('*');
-    for (var i = 0; i < allElements.length; i++) {
-      var el = allElements[i];
-      var style = el.getAttribute('style');
-      if (style && style.indexOf('--bgimage') !== -1) {
-        // Match: --bgimage: Url(/media/65242/desktop-header.jpg...)
-        var match = style.match(/--bgimage:\s*[Uu]rl\(([^)]+)\)/i);
+    // 1. Find billede fra --bgimage CSS variabel i sections
+    var sections = document.querySelectorAll('section[id], div[class*="header"], div[class*="hero"]');
+
+    for (var i = 0; i < sections.length; i++) {
+      var section = sections[i];
+
+      // Tjek section selv
+      var style = section.getAttribute('style') || '';
+
+      // Tjek også children med style
+      var styledChildren = section.querySelectorAll('[style*="bgimage"], [style*="background"]');
+
+      var elementsToCheck = [section];
+      for (var j = 0; j < styledChildren.length; j++) {
+        elementsToCheck.push(styledChildren[j]);
+      }
+
+      for (var k = 0; k < elementsToCheck.length; k++) {
+        var el = elementsToCheck[k];
+        var elStyle = el.getAttribute('style') || '';
+
+        // Match --bgimage: Url(/media/...)
+        var match = elStyle.match(/--bgimage:\s*[Uu]rl\(([^)]+)\)/i);
         if (match && match[1]) {
-          var path = match[1].split('?')[0].replace(/['"]/g, ''); // Fjern query params og quotes
-          if (path.startsWith('/media/')) {
+          var path = match[1].replace(/['"]/g, '').split('?')[0];
+          if (path.indexOf('/media/') !== -1) {
             var url = 'https://friluftslageret.dk' + path;
             log('Fandt billede fra --bgimage:', url);
             return [url];
+          }
+        }
+
+        // Match også background-image: url(...)
+        var bgMatch = elStyle.match(/background-image:\s*url\(([^)]+)\)/i);
+        if (bgMatch && bgMatch[1]) {
+          var bgPath = bgMatch[1].replace(/['"]/g, '').split('?')[0];
+          if (bgPath.indexOf('/media/') !== -1 && bgPath.indexOf('pim.') === -1) {
+            var bgUrl = bgPath.startsWith('http') ? bgPath : 'https://friluftslageret.dk' + bgPath;
+            log('Fandt billede fra background-image:', bgUrl);
+            return [bgUrl];
           }
         }
       }
@@ -116,99 +160,90 @@
     var og = document.querySelector('meta[property="og:image"]');
     if (og && og.content) {
       var url = og.content;
-      if (!url.startsWith('http')) {
-        url = 'https://friluftslageret.dk' + url;
+      // Ignorer pim.friluftslageret.dk
+      if (url.indexOf('pim.friluftslageret') === -1) {
+        if (!url.startsWith('http')) {
+          url = 'https://friluftslageret.dk' + url;
+        }
+        log('Fandt billede fra og:image:', url);
+        return [url];
       }
-      log('Fandt billede fra og:image:', url);
-      return [url];
     }
 
-    // 3. Find første billede fra /media/ mappe (IKKE fra pim.friluftslageret.dk)
-    var imgs = document.querySelectorAll('img[src*="/media/"], img[data-src*="/media/"]');
+    // 3. Find første billede fra friluftslageret.dk/media/ (IKKE pim.)
+    var imgs = document.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
-      var src = imgs[i].src || imgs[i].dataset.src;
-      // Spring pim.friluftslageret.dk over - det er produkt-billeder
-      if (src && src.indexOf('pim.friluftslageret') !== -1) {
-        continue;
-      }
-      if (src && src.indexOf('/media/') !== -1) {
-        if (!src.startsWith('http')) {
-          src = 'https://friluftslageret.dk' + src;
-        }
-        log('Fandt billede fra img tag:', src);
+      var src = imgs[i].src || imgs[i].dataset.src || '';
+
+      // SKAL være fra friluftslageret.dk/media/ og IKKE fra pim.
+      if (src.indexOf('friluftslageret.dk/media/') !== -1 &&
+          src.indexOf('pim.friluftslageret') === -1) {
+        log('Fandt billede fra img:', src.split('?')[0]);
         return [src.split('?')[0]];
       }
     }
 
+    log('Intet billede fundet');
     return [];
   }
 
   function extractIngredients() {
     var ingredients = [];
-    var foundSection = false;
+    var contentSections = getMainContentSections();
 
-    // Find "Ingredienser" overskrift og tag indhold derfra
-    var headings = document.querySelectorAll('h2, h3, h4, strong, b');
-    var ingredientHeading = null;
+    // Søg kun i indhold-sektioner
+    for (var s = 0; s < contentSections.length; s++) {
+      var section = contentSections[s];
 
-    for (var i = 0; i < headings.length; i++) {
-      var text = cleanText(headings[i].textContent);
-      if (/^ingrediens/i.test(text)) {
-        ingredientHeading = headings[i];
-        log('Fandt ingrediens-overskrift:', text);
-        break;
-      }
-    }
+      // Find "Ingredienser" overskrift i denne sektion
+      var headings = section.querySelectorAll('h2, h3, h4, strong, b');
 
-    if (!ingredientHeading) {
-      log('Ingen ingrediens-sektion fundet');
-      return [];
-    }
+      for (var i = 0; i < headings.length; i++) {
+        var heading = headings[i];
+        var headingText = cleanText(heading.textContent);
 
-    // Find parent container og søg efter ingredienser deri
-    var container = ingredientHeading.closest('div, section, article') || ingredientHeading.parentElement;
+        if (!/^ingrediens/i.test(headingText)) continue;
 
-    // Søg i efterfølgende elementer
-    var sibling = ingredientHeading.nextElementSibling || (ingredientHeading.parentElement ? ingredientHeading.parentElement.nextElementSibling : null);
+        log('Fandt Ingredienser overskrift i sektion:', section.id);
 
-    while (sibling) {
-      var tagName = sibling.tagName;
-      var text = cleanText(sibling.textContent);
+        // Find næste sibling elementer
+        var parent = heading.closest('div') || heading.parentElement;
+        var siblings = parent.querySelectorAll('p, ul, li');
 
-      // Stop ved næste sektion
-      if (tagName.match(/^H[1-4]$/) && text.length > 0 && !/ingrediens|dej|fyld/i.test(text)) {
-        break;
-      }
+        for (var j = 0; j < siblings.length; j++) {
+          var el = siblings[j];
 
-      // Parse paragraphs med <br> tags
-      if (tagName === 'P') {
-        var html = sibling.innerHTML;
-        var parts = html.split(/<br\s*\/?>/i);
+          if (el.tagName === 'P') {
+            // Split på <br>
+            var html = el.innerHTML;
+            var parts = html.split(/<br\s*\/?>/gi);
 
-        parts.forEach(function(part) {
-          var cleaned = cleanText(part);
-          // Filtrer tomme, korte og overskrifter
-          if (cleaned.length > 3 &&
-              cleaned.length < 200 &&
-              !/^[A-ZÆØÅ\s:]+$/.test(cleaned) &&
-              !/^(DEJ|FYLD|TIL|INGREDIENSER|SAUCE|MARINADE)/i.test(cleaned)) {
-            ingredients.push(cleaned);
+            for (var k = 0; k < parts.length; k++) {
+              var cleaned = cleanText(parts[k]);
+
+              // Filtrer: ikke tom, ikke kun store bogstaver, ikke overskrifter
+              if (cleaned.length > 3 &&
+                  cleaned.length < 150 &&
+                  !/^[A-ZÆØÅ\s:]+$/.test(cleaned) &&
+                  !/^(DEJ|FYLD|TIL|SAUCE|INGREDIENSER|MARINADE)/i.test(cleaned)) {
+                ingredients.push(cleaned);
+              }
+            }
           }
-        });
-      }
 
-      // Parse liste-elementer
-      if (tagName === 'UL' || tagName === 'OL') {
-        var items = sibling.querySelectorAll('li');
-        items.forEach(function(li) {
-          var liText = cleanText(li.textContent);
-          if (liText.length > 3 && liText.length < 200) {
-            ingredients.push(liText);
+          if (el.tagName === 'LI') {
+            var liText = cleanText(el.textContent);
+            if (liText.length > 3 && liText.length < 150) {
+              ingredients.push(liText);
+            }
           }
-        });
+        }
+
+        // Stop efter første ingrediens-sektion
+        if (ingredients.length > 0) break;
       }
 
-      sibling = sibling.nextElementSibling;
+      if (ingredients.length > 0) break;
     }
 
     // Fjern dubletter
@@ -222,85 +257,75 @@
 
   function extractInstructions() {
     var instructions = [];
-    var currentSection = '';
+    var contentSections = getMainContentSections();
+    var currentSectionName = '';
 
-    // Find fremgangsmåde/tilberedning sektion
-    var headings = document.querySelectorAll('h2, h3, h4, strong, b');
-    var instructionHeading = null;
+    for (var s = 0; s < contentSections.length; s++) {
+      var section = contentSections[s];
 
-    for (var i = 0; i < headings.length; i++) {
-      var text = cleanText(headings[i].textContent);
-      if (/^(fremgangsm|tilbered|sådan gør)/i.test(text)) {
-        instructionHeading = headings[i];
-        currentSection = text;
-        log('Fandt instruktions-overskrift:', text);
-        break;
-      }
-    }
+      // Find fremgangsmåde-relaterede overskrifter
+      var headings = section.querySelectorAll('h2, h3, h4, strong, b');
+      var foundStart = false;
 
-    if (!instructionHeading) {
-      // Prøv at finde FORBEREDELSE eller TILBEREDNING direkte
       for (var i = 0; i < headings.length; i++) {
-        var text = cleanText(headings[i].textContent);
-        if (/^(FORBEREDELSE|TILBEREDNING)/i.test(text)) {
-          instructionHeading = headings[i];
-          currentSection = text;
-          log('Fandt instruktions-sektion:', text);
+        var heading = headings[i];
+        var headingText = cleanText(heading.textContent);
+
+        // Start ved Fremgangsmåde, Tilberedning, Sådan gør du, FORBEREDELSE, TILBEREDNING
+        if (/^(fremgangsm|tilbered|sådan gør|forberedelse$|tilberedning$)/i.test(headingText)) {
+          foundStart = true;
+          currentSectionName = headingText;
+          log('Fandt instruktions-start:', headingText, 'i sektion:', section.id);
+          continue;
+        }
+
+        if (!foundStart) continue;
+
+        // Opdater sektion-navn for FORBEREDELSE/TILBEREDNING
+        if (/^(FORBEREDELSE|TILBEREDNING)$/i.test(headingText)) {
+          currentSectionName = headingText;
+          continue;
+        }
+
+        // Stop ved andre overskrifter
+        if (heading.tagName.match(/^H[2-3]$/) && headingText.length > 0) {
           break;
         }
       }
-    }
 
-    if (!instructionHeading) {
-      log('Ingen instruktions-sektion fundet');
-      return [];
-    }
+      if (!foundStart) continue;
 
-    // Søg fra denne overskrift
-    var sibling = instructionHeading.nextElementSibling || (instructionHeading.parentElement ? instructionHeading.parentElement.nextElementSibling : null);
+      // Find nummererede trin i paragraphs
+      var paragraphs = section.querySelectorAll('p');
 
-    while (sibling) {
-      var tagName = sibling.tagName;
-      var text = cleanText(sibling.textContent);
+      for (var j = 0; j < paragraphs.length; j++) {
+        var p = paragraphs[j];
+        var pText = cleanText(p.textContent);
 
-      // Stop ved produkt-sektion eller lignende
-      if (tagName.match(/^H[1-3]$/) && /^(produkt|udstyr|se også|relateret|opskrift)/i.test(text)) {
-        break;
-      }
+        // Match "1. Gør dette" format
+        var stepMatch = pText.match(/^(\d+)[\.\):\s]+(.+)/);
 
-      // Under-sektioner (FORBEREDELSE, TILBEREDNING)
-      if ((tagName === 'H4' || tagName === 'STRONG' || tagName === 'B') && /^(FORBEREDELSE|TILBEREDNING)/i.test(text)) {
-        currentSection = text;
-        sibling = sibling.nextElementSibling;
-        continue;
-      }
+        if (stepMatch && stepMatch[2].length > 15) {
+          var stepText = stepMatch[2];
 
-      // Parse nummererede trin fra paragraphs
-      if (tagName === 'P') {
-        var stepMatch = text.match(/^(\d+)[\.\):\s]+(.+)/);
-        if (stepMatch && stepMatch[2].length > 10) {
+          // Ignorer hvis det ligner navigation/menu
+          if (stepText.match(/dame|herre|jakker|bukser|rygsække|telte|kogegrej|sovegrej/i)) {
+            continue;
+          }
+
+          // Ignorer hvis det ligner cookie/login tekst
+          if (stepText.match(/cookie|samtykke|login|engangskode|browser|password/i)) {
+            continue;
+          }
+
           instructions.push({
-            name: currentSection ? currentSection + ' - Trin ' + stepMatch[1] : 'Trin ' + stepMatch[1],
-            text: stepMatch[2]
+            name: currentSectionName ? currentSectionName + ' - Trin ' + stepMatch[1] : 'Trin ' + stepMatch[1],
+            text: stepText
           });
         }
       }
 
-      // Parse liste-elementer
-      if (tagName === 'OL' || tagName === 'UL') {
-        var items = sibling.querySelectorAll('li');
-        items.forEach(function(li, index) {
-          var liText = cleanText(li.textContent);
-          if (liText.length > 15) {
-            instructions.push({
-              name: currentSection ? currentSection + ' - Trin ' + (index + 1) : 'Trin ' + (instructions.length + 1),
-              text: liText
-            });
-          }
-        });
-      }
-
-      sibling = sibling.nextElementSibling;
+      if (instructions.length > 0) break;
     }
 
     log('Fandt instruktioner:', instructions.length);
@@ -320,46 +345,53 @@
   }
 
   function extractYield() {
-    var text = document.body.innerText;
-    var patterns = [
-      /(\d+)\s*(?:små\s+)?pizzaer/i,
-      /(\d+)\s*portion/i,
-      /(\d+)\s*person/i,
-      /(\d+)\s*stk/i,
-      /til\s+(\d+)\s+person/i
-    ];
+    var contentSections = getMainContentSections();
 
-    for (var i = 0; i < patterns.length; i++) {
-      var match = text.match(patterns[i]);
-      if (match) {
-        return match[0];
+    for (var i = 0; i < contentSections.length; i++) {
+      var text = contentSections[i].textContent;
+
+      var patterns = [
+        /(\d+)\s*(?:små\s+)?pizzaer/i,
+        /(\d+)\s*portion/i,
+        /(\d+)\s*person/i,
+        /til\s+(\d+)\s+person/i
+      ];
+
+      for (var j = 0; j < patterns.length; j++) {
+        var match = text.match(patterns[j]);
+        if (match) {
+          return match[0];
+        }
       }
     }
     return '';
   }
 
   function extractTimes() {
-    var text = document.body.innerText;
+    var contentSections = getMainContentSections();
     var times = { prep: 0, cook: 0 };
 
-    var riseMatch = text.match(/hæv\w*\s+(\d+)[-–]?(\d+)?\s*(time|timer|min)/i);
-    if (riseMatch) {
-      var riseTime = riseMatch[2] ? parseInt(riseMatch[2]) : parseInt(riseMatch[1]);
-      times.prep += /time/i.test(riseMatch[3]) ? riseTime * 60 : riseTime;
-    }
+    for (var i = 0; i < contentSections.length; i++) {
+      var text = contentSections[i].textContent;
 
-    var cookPatterns = [
-      /bag\w*\s+(\d+)[-–]?(\d+)?\s*(time|timer|min)/i,
-      /tilbered\w*\s+(\d+)[-–]?(\d+)?\s*(time|timer|min)/i,
-      /(\d+)[-–](\d+)\s*min\w*\s+(?:afhængig|over)/i
-    ];
+      var riseMatch = text.match(/hæv\w*\s+(\d+)[-–]?(\d+)?\s*(time|timer|min)/i);
+      if (riseMatch) {
+        var riseTime = riseMatch[2] ? parseInt(riseMatch[2]) : parseInt(riseMatch[1]);
+        times.prep += /time/i.test(riseMatch[3]) ? riseTime * 60 : riseTime;
+      }
 
-    for (var i = 0; i < cookPatterns.length; i++) {
-      var cookMatch = text.match(cookPatterns[i]);
-      if (cookMatch) {
-        var cookTime = cookMatch[2] ? parseInt(cookMatch[2]) : parseInt(cookMatch[1]);
-        times.cook = cookMatch[3] && /time/i.test(cookMatch[3]) ? cookTime * 60 : cookTime;
-        break;
+      var cookPatterns = [
+        /(\d+)[-–](\d+)\s*min\w*\s+(?:afhængig|over|i ovnen)/i,
+        /bag\w*\s+i?\s*(\d+)[-–]?(\d+)?\s*(time|timer|min)/i,
+        /kog\w*\s+i?\s*(\d+)[-–]?(\d+)?\s*(time|timer|min)/i
+      ];
+
+      for (var j = 0; j < cookPatterns.length; j++) {
+        var cookMatch = text.match(cookPatterns[j]);
+        if (cookMatch && !times.cook) {
+          var cookTime = cookMatch[2] ? parseInt(cookMatch[2]) : parseInt(cookMatch[1]);
+          times.cook = cookMatch[3] && /time/i.test(cookMatch[3]) ? cookTime * 60 : cookTime;
+        }
       }
     }
 
