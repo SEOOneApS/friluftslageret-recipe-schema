@@ -123,10 +123,14 @@
       return [url];
     }
 
-    // 3. Find første billede fra /media/ mappe
+    // 3. Find første billede fra /media/ mappe (IKKE fra pim.friluftslageret.dk)
     var imgs = document.querySelectorAll('img[src*="/media/"], img[data-src*="/media/"]');
     for (var i = 0; i < imgs.length; i++) {
       var src = imgs[i].src || imgs[i].dataset.src;
+      // Spring pim.friluftslageret.dk over - det er produkt-billeder
+      if (src && src.indexOf('pim.friluftslageret') !== -1) {
+        continue;
+      }
       if (src && src.indexOf('/media/') !== -1) {
         if (!src.startsWith('http')) {
           src = 'https://friluftslageret.dk' + src;
