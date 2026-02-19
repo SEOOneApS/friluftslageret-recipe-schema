@@ -69,19 +69,26 @@
   }
 
   /**
-   * Tjekker om et element er inde i en cookie/consent popup eller lignende
+   * Tjekker om et element er inde i en cookie/consent popup, login modal eller lignende
    */
   function isInsideIgnoredElement(el) {
     var current = el;
     while (current && current !== document.body) {
       var id = (current.id || '').toLowerCase();
       var className = (current.className || '').toLowerCase();
+      var text = (current.textContent || '').substring(0, 100).toLowerCase();
 
-      // Ignorer cookie popups, consent banners, modals etc.
-      if (id.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay/i) ||
-          className.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay/i)) {
+      // Ignorer cookie popups, consent banners, login modals etc.
+      if (id.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay|login|signin|sign-in/i) ||
+          className.match(/cookie|consent|gdpr|privacy|modal|popup|banner|overlay|login|signin|sign-in|offcanvas|drawer/i)) {
         return true;
       }
+
+      // Ignorer elementer der indeholder login/engangskode tekst
+      if (current.tagName === 'DIV' && text.match(/engangskode|login med|log ind|sign in/i)) {
+        return true;
+      }
+
       current = current.parentElement;
     }
     return false;
