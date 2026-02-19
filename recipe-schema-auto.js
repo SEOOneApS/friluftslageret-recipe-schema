@@ -11,7 +11,7 @@
 (function() {
   'use strict';
 
-  console.log('[RecipeSchema] VERSION 5 LOADED - ' + new Date().toISOString());
+  console.log('[RecipeSchema] VERSION 6 LOADED - ' + new Date().toISOString());
 
   var CONFIG = {
     pathPrefix: '/opskrifter/',
@@ -294,101 +294,113 @@
   function extractInstructions() {
     var instructions = [];
     var seenTexts = {}; // Til at undgå dubletter
-    var contentSections = getMainContentSections();
-    var currentSectionName = '';
     var stepCounter = 0;
 
-    for (var s = 0; s < contentSections.length; s++) {
-      var section = contentSections[s];
+    // METODE 1: Find via data-recipe-section="method" (primær)
+    var methodSection = document.querySelector('[data-recipe-section="method"]');
 
-      // Find fremgangsmåde-relaterede overskrifter
-      var headings = section.querySelectorAll('h2, h3, h4, strong, b');
-      var foundStart = false;
+    if (methodSection) {
+      log('Fandt method sektion via data-recipe-section');
 
-      for (var i = 0; i < headings.length; i++) {
-        var heading = headings[i];
-        var headingText = cleanText(heading.textContent);
+      // Find alle li elementer i ordered/unordered lists
+      var listItems = methodSection.querySelectorAll('ol li, ul li');
 
-        // Start ved Fremgangsmåde, Tilberedning, Sådan gør du, FORBEREDELSE, TILBEREDNING
-        if (/^(fremgangsm|tilbered|sådan gør|forberedelse$|tilberedning$)/i.test(headingText)) {
-          foundStart = true;
-          currentSectionName = headingText;
-          log('Fandt instruktions-start:', headingText, 'i sektion:', section.id);
+      for (var i = 0; i < listItems.length; i++) {
+        var li = listItems[i];
+        var stepText = cleanText(li.textContent);
+
+        // Spring over tomme eller for korte trin
+        if (stepText.length < 10) continue;
+
+        // Ignorer hvis det ligner navigation/menu
+        if (stepText.match(/dame|herre|jakker|bukser|rygsække|telte/i)) continue;
+
+        // Ignorer cookie/login tekst
+        if (stepText.match(/cookie|samtykke|login|engangskode/i)) continue;
+
+        // Deduplikering
+        var textKey = stepText.substring(0, 50).toLowerCase();
+        if (seenTexts[textKey]) {
+          log('Springer over duplikat trin:', stepText.substring(0, 40));
           continue;
         }
+        seenTexts[textKey] = true;
 
-        if (!foundStart) continue;
+        stepCounter++;
+        instructions.push({
+          name: 'Trin ' + stepCounter,
+          text: stepText
+        });
 
-        // Opdater sektion-navn for FORBEREDELSE/TILBEREDNING
-        if (/^(FORBEREDELSE|TILBEREDNING)$/i.test(headingText)) {
-          currentSectionName = headingText;
-          continue;
-        }
-
-        // Stop ved andre overskrifter
-        if (heading.tagName.match(/^H[2-3]$/) && headingText.length > 0) {
-          break;
-        }
+        // Max 20 trin
+        if (stepCounter >= 20) break;
       }
+    }
 
-      if (!foundStart) continue;
+    // METODE 2: Fallback - søg efter overskrifter og nummererede paragraffer
+    if (instructions.length === 0) {
+      log('Ingen method sektion fundet, prøver fallback');
 
-      // Find nummererede trin i paragraphs
-      var paragraphs = section.querySelectorAll('p');
+      var contentSections = getMainContentSections();
 
-      for (var j = 0; j < paragraphs.length; j++) {
-        var p = paragraphs[j];
-        var pText = cleanText(p.textContent);
+      for (var s = 0; s < contentSections.length; s++) {
+        var section = contentSections[s];
+        var sectionText = section.textContent.toLowerCase();
 
-        // Match "1. Gør dette" format
-        var stepMatch = pText.match(/^(\d+)[\.\):\s]+(.+)/);
+        // Tjek om sektionen indeholder fremgangsmåde-relateret tekst
+        if (!sectionText.match(/fremgangsm|tilbered|sådan gør|forberedelse|tilberedning/i)) {
+          continue;
+        }
 
-        if (stepMatch && stepMatch[2].length > 15) {
-          var stepText = stepMatch[2];
+        log('Fandt instruktions-sektion:', section.id);
 
-          // Ignorer hvis det ligner navigation/menu
-          if (stepText.match(/dame|herre|jakker|bukser|rygsække|telte|kogegrej|sovegrej/i)) {
-            continue;
-          }
+        // Find li elementer først
+        var lis = section.querySelectorAll('ol li, ul li');
+        for (var j = 0; j < lis.length; j++) {
+          var liText = cleanText(lis[j].textContent);
+          if (liText.length < 10) continue;
 
-          // Ignorer hvis det ligner cookie/login tekst
-          if (stepText.match(/cookie|samtykke|login|engangskode|browser|password/i)) {
-            continue;
-          }
-
-          // Ignorer "Ofte stillede spørgsmål" og lignende
-          if (stepText.match(/^ofte\s+stillede|^FAQ|^spørgsmål/i)) {
-            continue;
-          }
-
-          // Ignorer hvis teksten indeholder ingrediensliste (typisk fejl)
-          if (stepText.match(/^\d+\s*(g|ml|dl|stk|fed)\s+/)) {
-            continue;
-          }
-
-          // VIGTIG: Deduplikering - tjek om vi allerede har set denne tekst
-          var textKey = stepText.substring(0, 50).toLowerCase();
-          if (seenTexts[textKey]) {
-            log('Springer over duplikat trin:', stepText.substring(0, 40));
-            continue;
-          }
+          var textKey = liText.substring(0, 50).toLowerCase();
+          if (seenTexts[textKey]) continue;
           seenTexts[textKey] = true;
 
           stepCounter++;
           instructions.push({
             name: 'Trin ' + stepCounter,
-            text: stepText
+            text: liText
           });
 
-          // Max 15 trin - normale opskrifter har ikke flere
-          if (stepCounter >= 15) {
-            log('Stopper ved 15 trin');
-            break;
+          if (stepCounter >= 20) break;
+        }
+
+        // Hvis ingen li fundet, prøv nummererede paragraffer
+        if (instructions.length === 0) {
+          var paragraphs = section.querySelectorAll('p');
+
+          for (var k = 0; k < paragraphs.length; k++) {
+            var pText = cleanText(paragraphs[k].textContent);
+            var stepMatch = pText.match(/^(\d+)[\.\):\s]+(.+)/);
+
+            if (stepMatch && stepMatch[2].length > 10) {
+              var stepContent = stepMatch[2];
+
+              var textKey = stepContent.substring(0, 50).toLowerCase();
+              if (seenTexts[textKey]) continue;
+              seenTexts[textKey] = true;
+
+              stepCounter++;
+              instructions.push({
+                name: 'Trin ' + stepCounter,
+                text: stepContent
+              });
+
+              if (stepCounter >= 20) break;
+            }
           }
         }
-      }
 
-      if (instructions.length > 0) break;
+        if (instructions.length > 0) break;
+      }
     }
 
     log('Fandt instruktioner:', instructions.length);
