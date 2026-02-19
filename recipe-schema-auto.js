@@ -74,18 +74,24 @@
   // =====================================================
 
   function extractTitle() {
-    // Friluftslageret bruger h2 til titel
-    var h2 = document.querySelector('h2');
-    if (h2) {
-      var text = cleanText(h2.textContent);
-      if (text.length > 5 && text.length < 200) {
+    // Friluftslageret bruger h1 til titel
+    var h1 = document.querySelector('h1');
+    if (h1) {
+      var text = cleanText(h1.textContent);
+      if (text.length > 3 && text.length < 200) {
+        log('Fandt titel fra h1:', text);
         return text;
       }
     }
 
-    // Fallback til h1
-    var h1 = document.querySelector('h1');
-    if (h1) return cleanText(h1.textContent);
+    // Fallback til h2
+    var h2 = document.querySelector('h2');
+    if (h2) {
+      var text = cleanText(h2.textContent);
+      if (text.length > 3 && text.length < 200) {
+        return text;
+      }
+    }
 
     // Sidste fallback: page title
     return document.title.split('|')[0].split('-')[0].trim();
@@ -238,7 +244,23 @@
   }
 
   function extractImage() {
-    // OG image (bedste valg)
+    // Først: Find billede fra --bgimage i style attribut (header billede)
+    var bgElements = document.querySelectorAll('[style*="--bgimage"]');
+    for (var i = 0; i < bgElements.length; i++) {
+      var style = bgElements[i].getAttribute('style');
+      if (style) {
+        // Match: --bgimage: Url(/media/65242/desktop-header.jpg...)
+        var match = style.match(/--bgimage:\s*[Uu]rl\(([^)]+)\)/);
+        if (match && match[1]) {
+          var path = match[1].split('?')[0]; // Fjern query parameters
+          var url = 'https://friluftslageret.dk' + path;
+          log('Fandt billede fra --bgimage:', url);
+          return [url];
+        }
+      }
+    }
+
+    // Fallback: OG image
     var og = document.querySelector('meta[property="og:image"]');
     if (og && og.content) {
       var url = og.content;
@@ -248,7 +270,7 @@
       return [url];
     }
 
-    // Første store billede
+    // Sidste fallback: Første store billede
     var imgs = document.querySelectorAll('img');
     for (var i = 0; i < imgs.length; i++) {
       var img = imgs[i];
