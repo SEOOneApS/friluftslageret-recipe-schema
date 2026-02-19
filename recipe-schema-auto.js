@@ -87,7 +87,6 @@
   // =====================================================
 
   function extractTitle() {
-    // BRUG PAGE TITLE - det er mest pålideligt
     var pageTitle = document.title;
 
     // Fjern site-navn (efter | eller -)
@@ -95,6 +94,35 @@
 
     // Fjern "Opskrift:" prefix hvis det findes
     cleanTitle = cleanTitle.replace(/^opskrift:\s*/i, '');
+
+    // VIGTIG: Tjek om titlen er ugyldig (login-modal, cookie, etc)
+    var invalidTitles = ['login med engangskode', 'login', 'log ind', 'cookie', 'samtykke'];
+    if (invalidTitles.indexOf(cleanTitle.toLowerCase()) !== -1 || cleanTitle.length < 5) {
+      log('Page title er ugyldig:', cleanTitle, '- prøver OG title');
+
+      // Fallback 1: Brug og:title
+      var ogTitle = document.querySelector('meta[property="og:title"]');
+      if (ogTitle && ogTitle.content) {
+        cleanTitle = ogTitle.content.split('|')[0].split(' - ')[0].trim();
+        if (cleanTitle.length > 5) {
+          log('Bruger og:title:', cleanTitle);
+          return cleanTitle;
+        }
+      }
+
+      // Fallback 2: Brug URL
+      var path = window.location.pathname;
+      var urlTitle = path.replace('/opskrifter/', '').replace(/\/$/, '').replace(/-/g, ' ');
+      // Capitalize first letter of each word
+      urlTitle = urlTitle.split(' ').map(function(word) {
+        return word.charAt(0).toUpperCase() + word.slice(1);
+      }).join(' ');
+
+      if (urlTitle.length > 3) {
+        log('Bruger URL som titel:', urlTitle);
+        return urlTitle;
+      }
+    }
 
     log('Bruger page title som navn:', cleanTitle);
     return cleanTitle;
@@ -156,7 +184,7 @@
       }
     }
 
-    // 2. Fallback: OG image (men IKKE fra pim.)
+    // 2. Fallback: OG image
     var og = document.querySelector('meta[property="og:image"]');
     if (og && og.content) {
       var url = og.content;
@@ -257,9 +285,10 @@
 
   function extractInstructions() {
     var instructions = [];
+    var seenTexts = {}; // Til at undgå dubletter
     var contentSections = getMainContentSections();
     var currentSectionName = '';
-    var seenTexts = {}; // Til at undgå dubletter
+    var stepCounter = 0;
 
     for (var s = 0; s < contentSections.length; s++) {
       var section = contentSections[s];
@@ -277,7 +306,20 @@
           foundStart = true;
           currentSectionName = headingText;
           log('Fandt instruktions-start:', headingText, 'i sektion:', section.id);
-          break; // Stop efter første match
+          continue;
+        }
+
+        if (!foundStart) continue;
+
+        // Opdater sektion-navn for FORBEREDELSE/TILBEREDNING
+        if (/^(FORBEREDELSE|TILBEREDNING)$/i.test(headingText)) {
+          currentSectionName = headingText;
+          continue;
+        }
+
+        // Stop ved andre overskrifter
+        if (heading.tagName.match(/^H[2-3]$/) && headingText.length > 0) {
+          break;
         }
       }
 
@@ -306,24 +348,38 @@
             continue;
           }
 
-          // Ignorer hvis vi allerede har set denne tekst (undgå dubletter)
-          var textKey = stepText.substring(0, 50);
+          // Ignorer "Ofte stillede spørgsmål" og lignende
+          if (stepText.match(/^ofte\s+stillede|^FAQ|^spørgsmål/i)) {
+            continue;
+          }
+
+          // Ignorer hvis teksten indeholder ingrediensliste (typisk fejl)
+          if (stepText.match(/^\d+\s*(g|ml|dl|stk|fed)\s+/)) {
+            continue;
+          }
+
+          // VIGTIG: Deduplikering - tjek om vi allerede har set denne tekst
+          var textKey = stepText.substring(0, 50).toLowerCase();
           if (seenTexts[textKey]) {
+            log('Springer over duplikat trin:', stepText.substring(0, 40));
             continue;
           }
           seenTexts[textKey] = true;
 
+          stepCounter++;
           instructions.push({
-            name: 'Trin ' + (instructions.length + 1),
+            name: 'Trin ' + stepCounter,
             text: stepText
           });
 
-          // Stop ved 15 trin for at undgå for mange
-          if (instructions.length >= 15) break;
+          // Max 15 trin - normale opskrifter har ikke flere
+          if (stepCounter >= 15) {
+            log('Stopper ved 15 trin');
+            break;
+          }
         }
       }
 
-      // Stop efter første sektion med instruktioner
       if (instructions.length > 0) break;
     }
 
@@ -474,7 +530,51 @@
     return schema;
   }
 
+  function removeExistingRecipeSchemas() {
+    // Find og fjern ALLE eksisterende Recipe schemas på siden
+    var existingSchemas = document.querySelectorAll('script[type="application/ld+json"]');
+    var removedCount = 0;
+
+    for (var i = 0; i < existingSchemas.length; i++) {
+      var script = existingSchemas[i];
+      try {
+        var content = JSON.parse(script.textContent);
+
+        // Tjek om det er en Recipe schema
+        var isRecipe = false;
+        if (content['@type'] === 'Recipe') {
+          isRecipe = true;
+        } else if (Array.isArray(content['@graph'])) {
+          // Tjek @graph array
+          for (var j = 0; j < content['@graph'].length; j++) {
+            if (content['@graph'][j]['@type'] === 'Recipe') {
+              isRecipe = true;
+              break;
+            }
+          }
+        }
+
+        if (isRecipe) {
+          script.parentNode.removeChild(script);
+          removedCount++;
+          log('Fjernede eksisterende Recipe schema');
+        }
+      } catch (e) {
+        // Ikke valid JSON, ignorer
+      }
+    }
+
+    return removedCount;
+  }
+
   function injectSchema(schema) {
+    // FØRST: Fjern alle eksisterende Recipe schemas
+    var removed = removeExistingRecipeSchemas();
+    if (removed > 0) {
+      log('Fjernede', removed, 'eksisterende schema(s)');
+    }
+
+    // Opret ny script tag med vores schema
     var script = document.createElement('script');
     script.type = 'application/ld+json';
     script.setAttribute('data-recipe-schema', 'auto-generated');
