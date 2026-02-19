@@ -11,6 +11,8 @@
 (function() {
   'use strict';
 
+  console.log('[RecipeSchema] VERSION 5 LOADED - ' + new Date().toISOString());
+
   var CONFIG = {
     pathPrefix: '/opskrifter/',
     defaults: {
@@ -88,16 +90,22 @@
 
   function extractTitle() {
     var pageTitle = document.title;
+    log('DEBUG: Rå document.title =', pageTitle);
 
     // Fjern site-navn (efter | eller -)
     var cleanTitle = pageTitle.split('|')[0].split(' - ')[0].split(' – ')[0].trim();
+    log('DEBUG: Efter split cleanTitle =', cleanTitle);
 
     // Fjern "Opskrift:" prefix hvis det findes
     cleanTitle = cleanTitle.replace(/^opskrift:\s*/i, '');
+    log('DEBUG: Efter prefix-fjernelse =', cleanTitle);
 
     // VIGTIG: Tjek om titlen er ugyldig (login-modal, cookie, etc)
     var invalidTitles = ['login med engangskode', 'login', 'log ind', 'cookie', 'samtykke'];
-    if (invalidTitles.indexOf(cleanTitle.toLowerCase()) !== -1 || cleanTitle.length < 5) {
+    var isInvalid = invalidTitles.indexOf(cleanTitle.toLowerCase()) !== -1 || cleanTitle.length < 5;
+    log('DEBUG: Er titel ugyldig?', isInvalid, '| Titel lowercase:', cleanTitle.toLowerCase());
+
+    if (isInvalid) {
       log('Page title er ugyldig:', cleanTitle, '- prøver OG title');
 
       // Fallback 1: Brug og:title
