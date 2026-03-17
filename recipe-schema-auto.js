@@ -411,10 +411,24 @@
     var iframe = document.querySelector('iframe[src*="youtube"], iframe[src*="youtu.be"]');
     if (iframe) {
       var embedUrl = iframe.src.split('?')[0];
-      return {
+
+      // Udtræk YouTube video ID for thumbnail
+      var videoId = '';
+      var idMatch = embedUrl.match(/embed\/([a-zA-Z0-9_-]{11})/);
+      if (!idMatch) idMatch = embedUrl.match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+      if (idMatch) videoId = idMatch[1];
+
+      var video = {
         "@type": "VideoObject",
-        "embedUrl": embedUrl
+        "embedUrl": embedUrl,
+        "uploadDate": new Date().toISOString().split('T')[0]
       };
+
+      if (videoId) {
+        video.thumbnailUrl = 'https://img.youtube.com/vi/' + videoId + '/hqdefault.jpg';
+      }
+
+      return video;
     }
     return null;
   }
